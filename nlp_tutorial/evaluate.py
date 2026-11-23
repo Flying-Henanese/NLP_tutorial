@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .io import read_rows, read_samples, write_json
 
-METHODS = ("random", "ppl", "conditional", "ifd")
+METHODS = ("random", "ppl", "conditional", "ifd", "d3_flash")
 TIE_ABS = 1e-9
 
 
@@ -48,6 +48,9 @@ def score_data(record, method):
     conditional = probability.get("conditional", {})
     if method == "random":
         return 0, {}
+    if method == "d3_flash":
+        decision = record.get("d3_flash", {})
+        return decision.get("risk") if decision.get("status") == "ok" else None, decision
     if method == "ppl":
         return probability.get("ppl"), direct
     if method == "conditional":
@@ -135,6 +138,12 @@ def summarize(ids, scores, details, samples, labels, budget, seed):
         report["seconds_per_100_candidates"] = sum(timings) * 100 / len(ids)
     if memory:
         report["peak_allocated_bytes"] = max(memory)
+    if any("status" in d for d in details):
+        report["status_counts"] = dict(Counter(d.get("status", "missing_result") for d in details))
+        report["insufficient_evidence_candidates"] = sum(
+            any(check["verdict"] == "insufficient_evidence" for check in d.get("checks", []))
+            for d in details
+        )
     return report, queue
 
 
@@ -173,6 +182,8 @@ def mismatch_check(ids, records):
 def enabled_method(method, configuration):
     if method == "random":
         return True
+    if method == "d3_flash":
+        return "d3_flash" in configuration
     return "probability" in configuration
 
 
@@ -221,7 +232,7 @@ def compare(args):
             if method not in task_settings["directions"]:
                 continue
             directions = (task_settings["directions"][method],)
-        elif method != "random":
+        elif method in {"ppl", "conditional", "ifd"}:
             directions = (1, -1)
         outcomes = []
         for direction in directions:

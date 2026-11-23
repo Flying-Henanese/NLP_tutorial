@@ -1,6 +1,6 @@
 """实训命令行入口。
 
-score 读取译文样本，调用概率模型，把分数逐条写入 JSONL。
+score 读取译文样本，调用概率模型或决策模型，把结果逐条写入 JSONL。
 evaluate 把分数和人工标签交给评估模块，生成开发集或测试集的结果。
 """
 
@@ -66,12 +66,18 @@ def score(args):
             raise ValueError("Install the GPU dependencies with uv sync --locked --extra gpu") from error
         scorer = ProbabilityScorer(args.model, args.revision, args.max_tokens, args.device)
         config["probability"] = scorer.metadata | {"transformers": version("transformers")}
+    if args.d3_flash:
+        from .decision import configuration, decide
+
+        config["d3_flash"] = configuration()
     setup_seconds = perf_counter() - started
     with output.open("x", encoding="utf-8") as handle:
         for identifier, sample in samples.items():
             record = {"id": identifier}
             if args.probability:
                 record["probability"] = scorer.score(sample, alternates.get(identifier))
+            if args.d3_flash:
+                record["d3_flash"] = decide(sample)
             append_row(handle, record)
     write_json(metadata, {
         "configuration": config,
@@ -88,6 +94,7 @@ def main():
     scoring.add_argument("--samples", required=True)
     scoring.add_argument("--out", required=True)
     scoring.add_argument("--probability", action="store_true")
+    scoring.add_argument("--d3-flash", action="store_true", help="调用内网 d3-flash 接口")
     scoring.add_argument("--model", default=DEFAULT_MODEL, help=f"默认读取 {DEFAULT_MODEL}")
     scoring.add_argument("--revision")
     scoring.add_argument("--max-tokens", type=positive, default=512)

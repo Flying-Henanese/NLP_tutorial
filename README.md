@@ -151,12 +151,26 @@ uv run --locked --extra gpu python main.py evaluate \
 | 输出 | 看什么 |
 | --- | --- |
 | `*.scores.jsonl` 和同名 `.meta.json` | 逐条 PPL、直接 NLL、条件 NLL、IFD、有效 token 数和失败原因；模型版本、模板、耗时及运行配置。PPL 与直接 NLL 共用一次推理，IFD 耗时为两次推理之和。 |
-| `summary.json` | 对比随机抽查、PPL、条件 NLL 和 IFD。重点看前 20 条的真错与关键错误数、关键错误召回率、每找到一个真错需复查几条，以及同组正确译文的胜率和平局率。真实和合成结果分别看。 |
+| `summary.json` | 对比随机抽查、PPL、条件 NLL、IFD，以及启用时的 d3-flash。重点看前 20 条的真错与关键错误数、关键错误召回率、每找到一个真错需复查几条，以及同组正确译文的胜率和平局率。真实和合成结果分别看。 |
 | `per_sample.csv` | 看每条样本的排名、是否进入复查、人工标签和原文位置。筛选 `false_alarm`（误报）和 `missed_error`（漏报），回看至少 3 条并解释原因。 |
 
 报告应列出模型、样本划分、预算、打分成功率和耗时，并说明哪种分数适合筛查哪类错译。用人工标签核对至少一个样本的逐 token 结果。脚本计算的峰值显存是 PyTorch 在该 GPU 上已分配的峰值，包含模型。按任务书交付脱敏 JSONL、逐条结果和两页以内的报告。
 
-## 请求 d3-flash
+## 用 d3-flash 批量评审
+
+在 T4 的仓库根目录运行：
+
+```bash
+uv run --locked --extra gpu python main.py score \
+  --samples examples/samples.jsonl --d3-flash \
+  --out runs/d3-smoke/scores.jsonl
+```
+
+`--d3-flash` 会给每条原文和候选译文提交固定判项，返回每项的选择、严重程度和用于排序的风险分。输出用 `id` 对齐样本，`d3_flash.status` 标记成功、请求失败或输出无效。通顺度单独用候选译文做判断。风险从高到低为严重错误、轻微错误、证据不足和通过。原文证据由同学复查时记录。
+
+正式实验可以在开发集和测试集的 `score` 命令里同时加上 `--d3-flash` 和 `--probability`，让 `evaluate` 用同一批人工标签比较这些方法。只运行决策模型时，可以省略 `--extra gpu`，或保留它以沿用已配置好的 GPU 环境。判项定义在 `nlp_tutorial/decision.py`，修改后从开发集重新冻结配置，再跑测试集。
+
+## 请求 d3-flash 的最小示例
 
 在 T4 上运行下面的命令，向内网 SystemOne 接口发一条分类请求。`state` 是要判断的内容，`questions` 里定义问题和选项。先用示例确认接口可用，再替换成同学们自己的验证问题。
 
