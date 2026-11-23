@@ -13,6 +13,8 @@ uv run --locked --extra gpu python -c 'import torch; print(torch.cuda.get_device
 
 项目保留 Python 3.13。GPU 依赖声明在 `pyproject.toml` 的 `gpu` 可选依赖中，由 `uv.lock` 固定版本。依赖通过清华 TUNA PyPI 镜像安装到仓库的 `.venv`。Linux x86_64 上锁定的 PyTorch 2.8.0 使用 CUDA 12.8 构建。根据 `nvidia-smi` 的空闲显存，用 `CUDA_VISIBLE_DEVICES` 指定一张卡。例如在 GPU 4 空闲时使用 `CUDA_VISIBLE_DEVICES=4`。概率打分默认读取 NAS 上的 `/nas_data/models/Qwen/Qwen3.5-4B-Base`，对应仅预训练的 Base 版。开始前确认模型分片已下载完整。用其他模型做对照时，可通过 `--model /path/to/snapshot` 指定。T4 推理用 FP16，损失用 FP32。示例默认限定一次输入 512 token。
 
+已在单张 T4 上用仓库的原生 `.venv` 和默认 `Qwen3.5-4B-Base` 跑通 6 条合成译文。FP16 推理的峰值显存约 8.62 GiB，模型加载和打分合计约 30 秒。这个结果用于确认运行环境和流程。
+
 ## 实验怎么进行
 
 先用仓库自带的样本确认程序能跑通，再准备正式语料。正式实验按以下顺序进行：
