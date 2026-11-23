@@ -1,0 +1,10 @@
+{"id":"a1","split":"dev","origin":"synthetic","error":false,"critical":false}
+{"id":"a2","split":"dev","origin":"synthetic","error":true,"critical":false,"error_type":"garbled_character","evidence":"OCR 多出 �"}
+{"id":"b1","split":"dev","origin":"synthetic","error":false,"critical":false}
+{"id":"b2","split":"dev","origin":"synthetic","error":true,"critical":true,"error_type":"number","evidence":"实测值 0.08 mm 被译成 0.10 mm"}
+{"id":"b3","split":"dev","origin":"synthetic","error":true,"critical":true,"error_type":"omission","evidence":"漏掉允许上限 0.10 mm"}
+{"id":"a3","split":"test","origin":"synthetic","error":false,"critical":false}
+{"id":"a4","split":"test","origin":"synthetic","error":true,"critical":true,"error_type":"repetition_and_omission","evidence":"重复识别 入，漏掉 记"}
+{"id":"b4","split":"test","origin":"synthetic","error":false,"critical":false}
+{"id":"b5","split":"test","origin":"synthetic","error":true,"critical":true,"error_type":"negation","evidence":"不得 被译成 may"}
+{"id":"b6","split":"test","origin":"synthetic","error":true,"critical":true,"error_type":"omission","evidence":"漏掉不能把参考书带出阅览室的规定"}
