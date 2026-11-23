@@ -1,8 +1,6 @@
 """Command-line workflow for scoring and evaluating the practicum."""
 
 import argparse
-from collections import Counter
-from contextlib import ExitStack
 from importlib.metadata import version
 from pathlib import Path
 from time import perf_counter
@@ -22,8 +20,6 @@ def positive(value):
 def score(args):
     if args.mismatches and not args.probability:
         raise ValueError("mismatch experiments require --probability")
-    if args.repeat_first and not args.judge:
-        raise ValueError("repeat scoring requires --judge")
     samples = read_samples(args.samples)
     alternates = {}
     if args.mismatches:
@@ -42,26 +38,15 @@ def score(args):
     output.parent.mkdir(parents=True, exist_ok=True)
     started = perf_counter()
     config = {}
-    with ExitStack() as stack:
-        if args.judge:
-            import httpx
-
-            from .judge import PROMPT_VERSION, Judge
-
-            client = stack.enter_context(httpx.Client(follow_redirects=False))
-            judge = Judge(client, args.timeout)
-            config["judge"] = {"requested_model": judge.model, "prompt_version": PROMPT_VERSION}
-        if args.probability:
-            try:
-                from .probability import ProbabilityScorer
-            except ImportError as error:
-                raise ValueError("Install the GPU dependencies with uv sync --locked --extra gpu") from error
-            scorer = ProbabilityScorer(args.model, args.revision, args.max_tokens, args.device)
-            config["probability"] = scorer.metadata | {"transformers": version("transformers")}
-        setup_seconds = perf_counter() - started
-        handle = stack.enter_context(output.open("x", encoding="utf-8"))
-        reviewed_tasks = Counter()
-        reported_models = set()
+    if args.probability:
+        try:
+            from .probability import ProbabilityScorer
+        except ImportError as error:
+            raise ValueError("Install the GPU dependencies with uv sync --locked --extra gpu") from error
+        scorer = ProbabilityScorer(args.model, args.revision, args.max_tokens, args.device)
+        config["probability"] = scorer.metadata | {"transformers": version("transformers")}
+    setup_seconds = perf_counter() - started
+    with output.open("x", encoding="utf-8") as handle:
         for identifier, sample in samples.items():
             record = {"id": identifier}
             if sample["task"] == "ocr" and sample["candidate"].strip():
@@ -70,21 +55,11 @@ def score(args):
                 record["rules"]["seconds"] = perf_counter() - start
             if args.probability:
                 record["probability"] = scorer.score(sample, alternates.get(identifier))
-            if args.judge:
-                task = sample["task"]
-                repeats = args.repeat_count if reviewed_tasks[task] < args.repeat_first else 0
-                reviewed_tasks[task] += 1
-                record["judge"] = judge.score(sample, repeats)
-                for first in record["judge"].values():
-                    for review in (first, *first.get("repeats", [])):
-                        if "model" in review:
-                            reported_models.add(review["model"])
             append_row(handle, record)
     write_json(metadata, {
-        "configuration": config, "reported_judge_models": sorted(reported_models),
+        "configuration": config,
         "candidates": len(samples), "setup_seconds": setup_seconds,
-        "elapsed_seconds": perf_counter() - started, "repeat_first": args.repeat_first,
-        "repeat_count": args.repeat_count if args.repeat_first else 0,
+        "elapsed_seconds": perf_counter() - started,
     })
     print(f"Wrote {len(samples)} rows to {output}")
 
@@ -96,14 +71,10 @@ def main():
     scoring.add_argument("--samples", required=True)
     scoring.add_argument("--out", required=True)
     scoring.add_argument("--probability", action="store_true")
-    scoring.add_argument("--judge", action="store_true")
     scoring.add_argument("--model", default="Qwen/Qwen2.5-1.5B")
     scoring.add_argument("--revision")
     scoring.add_argument("--max-tokens", type=positive, default=512)
     scoring.add_argument("--device", default="cuda")
-    scoring.add_argument("--timeout", type=positive, default=60)
-    scoring.add_argument("--repeat-first", type=positive, default=0)
-    scoring.add_argument("--repeat-count", type=positive, default=1)
     scoring.add_argument("--mismatches", help="JSONL of sample IDs and alternate source strings")
     scoring.set_defaults(run=score)
 

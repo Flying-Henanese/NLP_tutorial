@@ -11,10 +11,9 @@ from pathlib import Path
 from .io import read_rows, read_samples, write_json
 
 METHODS = {
-    "ocr": ("random", "rules", "ppl", "ocr_text", "ocr_reference"),
-    "translation": ("random", "ppl", "conditional", "ifd", "translation"),
+    "ocr": ("random", "rules", "ppl"),
+    "translation": ("random", "ppl", "conditional", "ifd"),
 }
-COMBINATION = {"ocr": "ocr_text", "translation": "translation"}
 TIE_ABS = 1e-9
 
 
@@ -41,18 +40,6 @@ def read_labels(samples, path):
     return labels
 
 
-def judge_score(review, mode):
-    if review.get("status") != "ok":
-        return None
-    values = {"major": 3, "minor": 2, "none": 0}
-    return max(
-        1 if check["verdict"] == "insufficient_evidence"
-        and (mode != "ocr_text" or check["criterion"] != "fidelity")
-        else values[check["severity"]]
-        for check in review["checks"]
-    )
-
-
 def score_data(record, method):
     probability = record.get("probability", {})
     direct = probability.get("direct", {})
@@ -74,8 +61,6 @@ def score_data(record, method):
             "seconds": sum(timings) if timings else None,
             "peak_allocated_bytes": max(memory, default=None),
         }
-    review = record.get("judge", {}).get(method, {})
-    return judge_score(review, method), review
 
 
 def tie_key(identifier, seed):
@@ -124,23 +109,7 @@ def review_counts(selected, eligible, labels):
     }
 
 
-def stability(reviews):
-    comparisons = defaultdict(Counter)
-    for first in reviews:
-        for repeat in first.get("repeats", []):
-            if first["status"] != "ok" or repeat["status"] != "ok":
-                comparisons["_runs"]["unusable"] += 1
-                continue
-            comparisons["_runs"]["compared"] += 1
-            for a, b in zip(first["checks"], repeat["checks"], strict=True):
-                bucket = comparisons[a["criterion"]]
-                bucket["compared"] += 1
-                bucket["verdict_agrees"] += a["verdict"] == b["verdict"]
-                bucket["severity_agrees"] += a["severity"] == b["severity"]
-    return {key: dict(value) for key, value in comparisons.items()}
-
-
-def summarize(ids, scores, details, samples, labels, task, budget, seed, method):
+def summarize(ids, scores, details, samples, labels, task, budget, seed):
     # Missing scores always sort last. The same seeded tie order applies to every method.
     queue = sorted(ids, key=lambda i: (
         scores[i] is None,
@@ -168,22 +137,10 @@ def summarize(ids, scores, details, samples, labels, task, budget, seed, method)
         report["seconds_per_100_candidates"] = sum(timings) * 100 / len(ids)
     if memory:
         report["peak_allocated_bytes"] = max(memory)
-    reviews = [d for d in details if "status" in d]
-    if reviews:
-        report["status_counts"] = dict(Counter(d["status"] for d in reviews))
-        report["insufficient_evidence_candidates"] = sum(
-            any(c["verdict"] == "insufficient_evidence"
-                and (method != "ocr_text" or c["criterion"] != "fidelity")
-                for c in d.get("checks", []))
-            for d in reviews
-        )
-        if method == "ocr_text":
-            report["fidelity_without_reference"] = report["status_counts"].get("ok", 0)
-        report["stability"] = stability(reviews)
     return report, queue
 
 
-def method_scores(ids, records, method, direction, seed, secondary=None):
+def method_scores(ids, records, method, direction, seed):
     scores = {}
     details = []
     for identifier in ids:
@@ -193,9 +150,6 @@ def method_scores(ids, records, method, direction, seed, secondary=None):
             value = int(tie_key(identifier, seed)[:13], 16)
         details.append(detail)
         scores[identifier] = None if value is None else (value * direction,)
-        if secondary is not None and scores[identifier] is not None:
-            extra, _ = score_data(record, "ppl")
-            scores[identifier] += (extra * secondary if extra is not None else None,)
     return scores, details
 
 
@@ -221,8 +175,7 @@ def mismatch_check(ids, records):
 def enabled_method(method, configuration):
     if method in ("random", "rules"):
         return True
-    family = "probability" if method in {"ppl", "conditional", "ifd"} else "judge"
-    return family in configuration
+    return "probability" in configuration
 
 
 def compare(args):
@@ -241,16 +194,11 @@ def compare(args):
         settings = {
             "budget": args.budget, "seed": args.seed, "tasks": {},
             "configuration": metadata["configuration"],
-            "reported_judge_models": metadata["reported_judge_models"],
         }
     else:
         settings = json.loads(settings_path.read_text(encoding="utf-8"))
         if settings["configuration"] != metadata["configuration"]:
             raise ValueError("test score configuration differs from frozen development configuration")
-        dev_models = settings["reported_judge_models"]
-        test_models = metadata["reported_judge_models"]
-        if dev_models and test_models and dev_models != test_models:
-            raise ValueError("the judge reported different model IDs on dev and test")
 
     result = {
         "split": args.split, "budget": settings["budget"], "tasks": {},
@@ -281,7 +229,7 @@ def compare(args):
             for direction in directions:
                 scores, details = method_scores(ids, records, method, direction, settings["seed"])
                 stat, queue = summarize(ids, scores, details, samples, labels, task,
-                                        settings["budget"], settings["seed"], method)
+                                        settings["budget"], settings["seed"])
                 outcomes.append((stat, queue, scores, direction))
             best = max(outcomes, key=lambda x: (
                 x[0]["pairs"]["win_rate"] or 0 if task == "translation" else 0,
@@ -289,21 +237,9 @@ def compare(args):
             ))
             reports[method] = best
             task_settings["directions"][method] = best[3]
-        primary = COMBINATION[task]
-        if all(method in reports for method in (primary, "ppl")) and (
-            args.split == "test" or all(reports[method][0]["success_rate"] for method in (primary, "ppl"))
-        ):
-            if args.split == "dev":
-                task_settings["combination"] = primary
-            if task_settings.get("combination") == primary:
-                direction = task_settings["directions"]["ppl"]
-                scores, _ = method_scores(ids, records, primary, 1, settings["seed"], secondary=direction)
-                stat, queue = summarize(ids, scores, [], samples, labels, task,
-                                        settings["budget"], settings["seed"], "combined")
-                reports["combined"] = (stat, queue, scores, 1)
         if args.split == "dev":
             task_settings["best_single"] = max(
-                (name for name in reports if name != "combined" and reports[name][0]["success_rate"]),
+                (name for name in reports if reports[name][0]["success_rate"]),
                 key=lambda name: (
                     reports[name][0]["critical_errors"], reports[name][0]["true_errors"],
                 ),
@@ -316,11 +252,6 @@ def compare(args):
         }
         if task == "translation":
             result["tasks"][task]["mismatch_check"] = mismatch_check(ids, records)
-        if "combined" in reports:
-            individual = reports[task_settings["best_single"]][0]
-            result["tasks"][task]["combined_extra_critical_errors"] = (
-                reports["combined"][0]["critical_errors"] - individual["critical_errors"]
-            )
         for name, (_, queue, scores, _) in reports.items():
             for rank, identifier in enumerate(queue, 1):
                 sample, label = samples[identifier], labels[identifier]
