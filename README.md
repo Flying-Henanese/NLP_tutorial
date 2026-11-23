@@ -40,7 +40,7 @@ CUDA_VISIBLE_DEVICES=4 uv run --locked --extra gpu python main.py score \
 
 ### 选原文，给每段配三份译文
 
-同学们从自己的校内课程作业中收集实训语料。优先选能找到原文、方便核对译文的作业。建议选约 **40 段原文，每段三份候选**，共约 120 条：
+同学们从自己的校内课程作业中收集实训语料。先挑能回查原文的作业，把原文和已有译文按段落对齐，记录作业编号和段落位置。建议选约 **40 段原文，每段三份候选**，共约 120 条：
 
 | 候选 | 准备方式 |
 | --- | --- |
@@ -58,18 +58,22 @@ CUDA_VISIBLE_DEVICES=4 uv run --locked --extra gpu python main.py score \
 
 ### 保存输入和标签
 
-用 UTF-8 JSONL，每行写一个 JSON 对象。`data/samples.jsonl` 保存候选；`data/labels.jsonl` 单独保存人工判断。两个文件的候选 ID 一一对应。
+在仓库根目录建立 `data/`，保存两份 UTF-8 JSONL。每行是一个完整的 JSON 对象。同一个候选在两个文件中的 `id` 必须一致。一个原文段落及其所有候选共用 `group_id`，同一份课程作业的段落共用 `doc_id`。`location` 记录页码、段落或行号，方便回查。
 
-`data/samples.jsonl` 的一行：
+`data/samples.jsonl` · 同一段原文的三条候选
 
 ```json
-{"id":"b2","doc_id":"science-1","group_id":"b01","task":"translation","source":"实测值 0.08 mm，允许上限 0.10 mm。","candidate":"The measured value was 0.10 mm, with an upper limit of 0.10 mm.","location":{"line":1}}
+{"id":"b1","doc_id":"coursework-01","group_id":"b01","task":"translation","source":"实测值 0.08 mm，允许上限 0.10 mm。","candidate":"The measured value was 0.08 mm, with an upper limit of 0.10 mm.","location":{"line":1}}
+{"id":"b2","doc_id":"coursework-01","group_id":"b01","task":"translation","source":"实测值 0.08 mm，允许上限 0.10 mm。","candidate":"The measured value was 0.10 mm, with an upper limit of 0.10 mm.","location":{"line":1}}
+{"id":"b3","doc_id":"coursework-01","group_id":"b01","task":"translation","source":"实测值 0.08 mm，允许上限 0.10 mm。","candidate":"The measured value was 0.08 mm.","location":{"line":1}}
 ```
 
-`data/labels.jsonl` 中对应的一行：
+`data/labels.jsonl` · 对应的三条人工标签
 
 ```json
-{"id":"b2","split":"dev","origin":"synthetic","error":true,"critical":true,"error_type":"number","evidence":"原文实测值 0.08 mm，候选译文实测值 0.10 mm"}
+{"id":"b1","split":"dev","origin":"synthetic","error":false,"critical":false}
+{"id":"b2","split":"dev","origin":"synthetic","error":true,"critical":true,"error_type":"number","evidence":"实测值 0.08 mm 被译成 0.10 mm"}
+{"id":"b3","split":"dev","origin":"synthetic","error":true,"critical":true,"error_type":"omission","evidence":"漏掉允许上限 0.10 mm"}
 ```
 
 - `task` 固定写 `translation`。`source` 是原文，`candidate` 是实际要打分的译文。`location` 可填页码、段落或行号。语种默认中译英，其他语种在同组样本中一致写明 `source_language` 和 `target_language`。
@@ -79,7 +83,7 @@ CUDA_VISIBLE_DEVICES=4 uv run --locked --extra gpu python main.py score \
 
 ### 生成两个用于打分的输入文件
 
-总表留给 `evaluate`。下列命令会检查文档有没有跨集合，并按标签中的 `split` 从总表生成 `data/samples.dev.jsonl` 和 `data/samples.test.jsonl`。写出的每行仍只有样本字段。
+总表留给 `evaluate`。下列命令会检查文档有没有跨集合，并按标签中的 `split` 从总表生成 `data/samples.dev.jsonl` 和 `data/samples.test.jsonl`。写出的每行仍只有样本字段。上面的三行展示的是同一个开发集候选组，运行划分脚本前还需准备来自其他作业的测试集样本。
 
 ```bash
 python3 - <<'PY'
