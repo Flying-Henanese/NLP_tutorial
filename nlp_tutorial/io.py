@@ -1,4 +1,8 @@
-"""JSONL validation shared by scoring and evaluation."""
+"""读取、检查和保存实训数据。
+
+负责读写 JSON 和 JSONL，检查样本 ID、必填字段和同组译文的原文是否一致。
+打分和评估共用这里的读写函数，按样本 ID 关联输入、分数和标签。
+"""
 
 import json
 from pathlib import Path
@@ -29,26 +33,20 @@ def read_samples(path):
     rows = read_rows(path)
     groups = {}
     for identifier, row in rows.items():
-        task = row.get("task")
-        required = ["doc_id", "candidate"]
-        if task == "translation":
-            required.extend(["group_id", "source"])
-        if task not in ("ocr", "translation") or any(
-            not isinstance(row.get(field), str) for field in required
-        ):
-            raise ValueError(f"{identifier}: invalid task or missing text fields")
-        if not row["doc_id"].strip() or (
-            task == "translation" and not row["group_id"].strip()
-        ):
+        if row.get("task") != "translation":
+            raise ValueError(f"{identifier}: task must be translation")
+        if any(not isinstance(row.get(field), str)
+               for field in ("doc_id", "group_id", "source", "candidate")):
+            raise ValueError(f"{identifier}: missing or invalid translation fields")
+        if not row["doc_id"].strip() or not row["group_id"].strip():
             raise ValueError(f"{identifier}: empty document or group ID")
-        if "source" in row and not isinstance(row["source"], str):
-            raise ValueError(f"{identifier}: source must be a string")
-        if task == "translation":
-            group = (row["doc_id"], row["source"], row.get("source_language", "Chinese"),
-                     row.get("target_language", "English"))
-            previous = groups.setdefault(row["group_id"], group)
-            if previous != group:
-                raise ValueError(f"{identifier}: translation group has inconsistent source or languages")
+        group = (
+            row["doc_id"], row["source"], row.get("source_language", "Chinese"),
+            row.get("target_language", "English"),
+        )
+        previous = groups.setdefault(row["group_id"], group)
+        if previous != group:
+            raise ValueError(f"{identifier}: translation group has inconsistent source or languages")
     return rows
 
 

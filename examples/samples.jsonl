@@ -1,10 +1,6 @@
-{"id":"a1","doc_id":"notice-1","task":"ocr","candidate":"展览周六上午开放。","source":"展览周六上午开放。","location":{"line":1}}
-{"id":"a2","doc_id":"notice-1","task":"ocr","candidate":"展览�周六上午开放。","source":"展览周六上午开放。","location":{"line":1}}
 {"id":"b1","doc_id":"science-1","group_id":"b01","task":"translation","source":"实测值 0.08 mm，允许上限 0.10 mm。","candidate":"The measured value was 0.08 mm, with an upper limit of 0.10 mm.","location":{"line":1}}
 {"id":"b2","doc_id":"science-1","group_id":"b01","task":"translation","source":"实测值 0.08 mm，允许上限 0.10 mm。","candidate":"The measured value was 0.10 mm, with an upper limit of 0.10 mm.","location":{"line":1}}
 {"id":"b3","doc_id":"science-1","group_id":"b01","task":"translation","source":"实测值 0.08 mm，允许上限 0.10 mm。","candidate":"The measured value was 0.08 mm.","location":{"line":1}}
-{"id":"a3","doc_id":"notice-2","task":"ocr","candidate":"请在入口处登记。","source":"请在入口处登记。","location":{"line":2}}
-{"id":"a4","doc_id":"notice-2","task":"ocr","candidate":"请在入入入入口处登。","source":"请在入口处登记。","location":{"line":2}}
 {"id":"b4","doc_id":"library-1","group_id":"b02","task":"translation","source":"读者不得将参考书带出阅览室。","candidate":"Readers must not take reference books out of the reading room.","location":{"line":2}}
 {"id":"b5","doc_id":"library-1","group_id":"b02","task":"translation","source":"读者不得将参考书带出阅览室。","candidate":"Readers may take reference books out of the reading room.","location":{"line":2}}
 {"id":"b6","doc_id":"library-1","group_id":"b02","task":"translation","source":"读者不得将参考书带出阅览室。","candidate":"There are reference books in the reading room.","location":{"line":2}}

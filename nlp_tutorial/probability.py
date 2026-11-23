@@ -1,11 +1,15 @@
-"""Causal language-model scores with explicitly aligned candidate tokens."""
+"""用自回归语言模型计算直接 NLL、PPL、条件 NLL 和 IFD。
+
+直接打分只读候选文本，条件打分另外提供翻译指令和原文。
+两次 NLL 都对同一批候选 token 取平均，也支持替换原文做错配对照。
+"""
 
 import math
 from time import perf_counter
 
 import torch
 from torch.nn.functional import cross_entropy
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer
 
 TEMPLATE = "Translate the following {source_language} text into {target_language}.\nSource: {source}\nTranslation:\n"
 
@@ -16,11 +20,19 @@ class ProbabilityScorer:
         if self.device.type == "cuda" and not torch.cuda.is_available():
             raise ValueError("CUDA is unavailable. Install the gpu extra and check nvidia-smi.")
         dtype = torch.float16 if self.device.type == "cuda" else torch.float32
+        config = AutoConfig.from_pretrained(model_id, revision=revision)
         self.tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_id, revision=revision, torch_dtype=dtype
+        loader = AutoModelForCausalLM
+        # Qwen3.5 的完整检查点包含视觉编码器，按检查点的架构加载。
+        # 打分时只传纯文本 token，直接读取语言模型的 logits。
+        if config.model_type == "qwen3_5" and (
+            "Qwen3_5ForConditionalGeneration" in (config.architectures or [])
+        ):
+            loader = AutoModelForImageTextToText
+        self.model = loader.from_pretrained(
+            model_id, config=config, revision=revision, dtype=dtype
         ).to(self.device).eval()
-        model_limit = getattr(self.model.config, "max_position_embeddings", max_tokens)
+        model_limit = getattr(config.get_text_config(), "max_position_embeddings", max_tokens)
         self.max_tokens = min(model_limit, max_tokens)
         self.metadata = {
             "model": model_id,
@@ -45,7 +57,7 @@ class ProbabilityScorer:
         if on_gpu:
             torch.cuda.reset_peak_memory_stats(self.device)
         ids = torch.tensor([prefix_ids + answer_ids], device=self.device)
-        logits = self.model(ids, use_cache=False).logits[0]
+        logits = self.model(input_ids=ids, use_cache=False).logits[0]
         # Score candidate tokens 1..N-1 in both runs. Row i predicts token i+1.
         offset = len(prefix_ids)
         losses = cross_entropy(logits[offset:-1].float(), ids[0, offset + 1:], reduction="none")
@@ -90,7 +102,7 @@ class ProbabilityScorer:
         except (ValueError, OverflowError, torch.cuda.OutOfMemoryError) as error:
             result["direct_error"] = str(error).splitlines()[0]
 
-        if "ppl" in result and sample["task"] == "translation":
+        if "ppl" in result:
             for name, source in (("conditional", sample["source"]), ("mismatch", alternate_source)):
                 if source is None:
                     continue

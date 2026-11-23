@@ -1,13 +1,19 @@
-"""Command-line workflow for scoring and evaluating the practicum."""
+"""实训命令行入口。
+
+score 读取译文样本，调用概率模型，把分数逐条写入 JSONL。
+evaluate 把分数和人工标签交给评估模块，生成开发集或测试集的结果。
+"""
 
 import argparse
+import json
 from importlib.metadata import version
 from pathlib import Path
 from time import perf_counter
 
 from .evaluate import compare
 from .io import append_row, read_rows, read_samples, write_json
-from .rules import score_ocr
+
+DEFAULT_MODEL = "/nas_data/models/Qwen/Qwen3.5-4B-Base"
 
 
 def positive(value):
@@ -15,6 +21,20 @@ def positive(value):
     if number < 1:
         raise argparse.ArgumentTypeError("must be positive")
     return number
+
+
+def check_local_model(model_id):
+    path = Path(model_id).expanduser()
+    if not path.is_absolute():
+        return
+    if not (path / "config.json").is_file():
+        raise ValueError(f"模型目录未就绪：{path}。请确认 NAS 上的模型已下载完成。")
+    index = path / "model.safetensors.index.json"
+    if index.is_file():
+        weights = json.loads(index.read_text(encoding="utf-8"))["weight_map"]
+        missing = sorted({name for name in weights.values() if not (path / name).is_file()})
+        if missing:
+            raise ValueError(f"模型权重仍未下载完整：{path} 缺少 {', '.join(missing)}")
 
 
 def score(args):
@@ -26,7 +46,7 @@ def score(args):
         for identifier, row in read_rows(args.mismatches).items():
             sample = samples.get(identifier)
             source = row.get("source")
-            if (not sample or sample["task"] != "translation" or not isinstance(source, str)
+            if (not sample or not isinstance(source, str)
                     or not source.strip() or source.strip() == sample["source"].strip()):
                 raise ValueError(f"{identifier}: invalid alternate source")
             alternates[identifier] = source
@@ -39,6 +59,7 @@ def score(args):
     started = perf_counter()
     config = {}
     if args.probability:
+        check_local_model(args.model)
         try:
             from .probability import ProbabilityScorer
         except ImportError as error:
@@ -49,10 +70,6 @@ def score(args):
     with output.open("x", encoding="utf-8") as handle:
         for identifier, sample in samples.items():
             record = {"id": identifier}
-            if sample["task"] == "ocr" and sample["candidate"].strip():
-                start = perf_counter()
-                record["rules"] = score_ocr(sample["candidate"])
-                record["rules"]["seconds"] = perf_counter() - start
             if args.probability:
                 record["probability"] = scorer.score(sample, alternates.get(identifier))
             append_row(handle, record)
@@ -71,7 +88,7 @@ def main():
     scoring.add_argument("--samples", required=True)
     scoring.add_argument("--out", required=True)
     scoring.add_argument("--probability", action="store_true")
-    scoring.add_argument("--model", default="Qwen/Qwen2.5-1.5B")
+    scoring.add_argument("--model", default=DEFAULT_MODEL, help=f"默认读取 {DEFAULT_MODEL}")
     scoring.add_argument("--revision")
     scoring.add_argument("--max-tokens", type=positive, default=512)
     scoring.add_argument("--device", default="cuda")

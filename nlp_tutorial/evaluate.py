@@ -1,4 +1,9 @@
-"""Compare review queues against held-out human labels."""
+"""用人工标签比较各个打分方法的复查效果。
+
+按 ID 对齐分数和标签，检查同一原始文档是否跨越开发集和测试集。
+在开发集确定排序方向，在测试集按固定预算统计命中数、关键错误召回率
+和译文配对胜率，并输出汇总 JSON 和逐条 CSV。
+"""
 
 import csv
 import hashlib
@@ -10,10 +15,7 @@ from pathlib import Path
 
 from .io import read_rows, read_samples, write_json
 
-METHODS = {
-    "ocr": ("random", "rules", "ppl"),
-    "translation": ("random", "ppl", "conditional", "ifd"),
-}
+METHODS = ("random", "ppl", "conditional", "ifd")
 TIE_ABS = 1e-9
 
 
@@ -46,9 +48,6 @@ def score_data(record, method):
     conditional = probability.get("conditional", {})
     if method == "random":
         return 0, {}
-    if method == "rules":
-        rule = record.get("rules", {})
-        return rule.get("score"), rule
     if method == "ppl":
         return probability.get("ppl"), direct
     if method == "conditional":
@@ -109,7 +108,7 @@ def review_counts(selected, eligible, labels):
     }
 
 
-def summarize(ids, scores, details, samples, labels, task, budget, seed):
+def summarize(ids, scores, details, samples, labels, budget, seed):
     # Missing scores always sort last. The same seeded tie order applies to every method.
     queue = sorted(ids, key=lambda i: (
         scores[i] is None,
@@ -128,8 +127,7 @@ def summarize(ids, scores, details, samples, labels, task, budget, seed):
     report["unscored"] = sum(scores[i] is None for i in ids)
     report["success_rate"] = 1 - report["unscored"] / len(ids)
     report["unscored_reviewed"] = sum(scores[i] is None for i in selected)
-    if task == "translation":
-        report["pairs"] = pairs(ids, samples, labels, scores)
+    report["pairs"] = pairs(ids, samples, labels, scores)
     timings = [d["seconds"] for d in details if d.get("seconds") is not None]
     memory = [d["peak_allocated_bytes"] for d in details if d.get("peak_allocated_bytes") is not None]
     if timings:
@@ -173,7 +171,7 @@ def mismatch_check(ids, records):
 
 
 def enabled_method(method, configuration):
-    if method in ("random", "rules"):
+    if method == "random":
         return True
     return "probability" in configuration
 
@@ -205,66 +203,65 @@ def compare(args):
         "scoring_run": metadata,
     }
     rows = []
-    for task, methods in METHODS.items():
-        ids = [i for i, s in samples.items() if s["task"] == task and labels[i]["split"] == args.split]
-        if not ids:
+    task = "translation"
+    ids = [i for i in samples if labels[i]["split"] == args.split]
+    if not ids:
+        raise ValueError(f"no samples in {args.split} split")
+    if not set(ids) <= records.keys():
+        raise ValueError(f"{task}: scores missing for {len(set(ids) - records.keys())} IDs")
+    if args.split == "test" and task not in settings["tasks"]:
+        raise ValueError(f"{task}: no frozen development settings")
+    task_settings = settings["tasks"].get(task, {"directions": {}})
+    reports = {}
+    for method in METHODS:
+        if not enabled_method(method, settings["configuration"]):
             continue
-        if not set(ids) <= records.keys():
-            raise ValueError(f"{task}: scores missing for {len(set(ids) - records.keys())} IDs")
-        if args.split == "test" and task not in settings["tasks"]:
-            raise ValueError(f"{task}: no frozen development settings")
-        task_settings = settings["tasks"].get(task, {"directions": {}})
-        reports = {}
-        for method in methods:
-            if not enabled_method(method, settings["configuration"]):
+        directions = (1,)
+        if args.split == "test":
+            if method not in task_settings["directions"]:
                 continue
-            directions = (1,)
-            if args.split == "test":
-                if method not in task_settings["directions"]:
-                    continue
-                directions = (task_settings["directions"][method],)
-            elif task == "translation" and method in {"ppl", "conditional", "ifd"}:
-                directions = (1, -1)
-            outcomes = []
-            for direction in directions:
-                scores, details = method_scores(ids, records, method, direction, settings["seed"])
-                stat, queue = summarize(ids, scores, details, samples, labels, task,
-                                        settings["budget"], settings["seed"])
-                outcomes.append((stat, queue, scores, direction))
-            best = max(outcomes, key=lambda x: (
-                x[0]["pairs"]["win_rate"] or 0 if task == "translation" else 0,
-                x[0]["critical_errors"], x[0]["true_errors"],
-            ))
-            reports[method] = best
-            task_settings["directions"][method] = best[3]
-        if args.split == "dev":
-            task_settings["best_single"] = max(
-                (name for name in reports if reports[name][0]["success_rate"]),
-                key=lambda name: (
-                    reports[name][0]["critical_errors"], reports[name][0]["true_errors"],
-                ),
-            )
-            settings["tasks"][task] = task_settings
+            directions = (task_settings["directions"][method],)
+        elif method != "random":
+            directions = (1, -1)
+        outcomes = []
+        for direction in directions:
+            scores, details = method_scores(ids, records, method, direction, settings["seed"])
+            stat, queue = summarize(ids, scores, details, samples, labels,
+                                    settings["budget"], settings["seed"])
+            outcomes.append((stat, queue, scores, direction))
+        best = max(outcomes, key=lambda x: (
+            x[0]["pairs"]["win_rate"] or 0,
+            x[0]["critical_errors"], x[0]["true_errors"],
+        ))
+        reports[method] = best
+        task_settings["directions"][method] = best[3]
+    if args.split == "dev":
+        task_settings["best_single"] = max(
+            (name for name in reports if reports[name][0]["success_rate"]),
+            key=lambda name: (
+                reports[name][0]["critical_errors"], reports[name][0]["true_errors"],
+            ),
+        )
+        settings["tasks"][task] = task_settings
 
-        result["tasks"][task] = {
-            "methods": {name: outcome[0] for name, outcome in reports.items()},
-            "best_single_on_dev": task_settings["best_single"],
-        }
-        if task == "translation":
-            result["tasks"][task]["mismatch_check"] = mismatch_check(ids, records)
-        for name, (_, queue, scores, _) in reports.items():
-            for rank, identifier in enumerate(queue, 1):
-                sample, label = samples[identifier], labels[identifier]
-                reviewed = rank <= settings["budget"]
-                rows.append({
-                    "id": identifier, "task": task, "method": name, "rank": rank,
-                    "scores": json.dumps(scores[identifier]), "reviewed": reviewed,
-                    "outcome": ("error_found" if label["error"] else "false_alarm") if reviewed
-                    else ("missed_error" if label["error"] else "clean_outside_budget"),
-                    "doc_id": sample["doc_id"], "location": json.dumps(sample.get("location"), ensure_ascii=False),
-                    "origin": label["origin"], "critical": label["critical"],
-                    "error_type": label.get("error_type", ""), "evidence": label.get("evidence", ""),
-                })
+    result["tasks"][task] = {
+        "methods": {name: outcome[0] for name, outcome in reports.items()},
+        "best_single_on_dev": task_settings["best_single"],
+    }
+    result["tasks"][task]["mismatch_check"] = mismatch_check(ids, records)
+    for name, (_, queue, scores, _) in reports.items():
+        for rank, identifier in enumerate(queue, 1):
+            sample, label = samples[identifier], labels[identifier]
+            reviewed = rank <= settings["budget"]
+            rows.append({
+                "id": identifier, "task": task, "method": name, "rank": rank,
+                "scores": json.dumps(scores[identifier]), "reviewed": reviewed,
+                "outcome": ("error_found" if label["error"] else "false_alarm") if reviewed
+                else ("missed_error" if label["error"] else "clean_outside_budget"),
+                "doc_id": sample["doc_id"], "location": json.dumps(sample.get("location"), ensure_ascii=False),
+                "origin": label["origin"], "critical": label["critical"],
+                "error_type": label.get("error_type", ""), "evidence": label.get("evidence", ""),
+            })
     if not rows:
         raise ValueError(f"no samples in {args.split} split")
     output = Path(args.out)

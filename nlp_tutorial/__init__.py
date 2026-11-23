@@ -1,1 +1,5 @@
-"""T4 practicum scoring and evaluation."""
+"""T4 实训代码包。
+
+cli 串起样本读取、打分和评估。io 负责读写数据，probability
+负责给译文打分，evaluate 负责用人工标签验证这些分数能否帮助定位错误。
+"""
