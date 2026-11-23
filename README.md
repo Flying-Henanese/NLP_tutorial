@@ -35,9 +35,19 @@ uv run --locked --extra gpu python main.py evaluate \
 
 ### 添加 d3-flash 评审
 
-本项目按 OpenAI 兼容的 Chat Completions 接口接入。用团队现有方式设置 `D3_BASE_URL`（填服务的 API 根地址，例如包含 `/v1` 的地址）和 `D3_API_KEY`。服务模型名不是 `d3-flash` 时再设置 `D3_MODEL`。凭据从环境变量读取。
+在 T4 上，`--judge` 默认调用内网 SystemOne 接口 `http://192.168.0.213:18892/v1/systemone`，使用 `vllm-sr/d3-flash`。当前内网接口可直接访问。其他部署可用 `D3_BASE_URL` 覆盖 API 根地址或完整接口地址，用 `D3_MODEL` 覆盖模型名。服务需要认证时再设置 `D3_API_KEY`。
 
-在评分命令中加入 `--judge` 即可评审。先用一条脱敏样本确认返回格式，再跑批量。`--repeat-first 4` 会对每组前 4 条样本各复跑一次。OCR 分为纯文本和附人工核对稿两种条件。服务只收到固定判项和相应的文本，评分命令不读标签。
+先用仓库里的合成样本试跑。只做评审时，`uv sync --locked` 即可安装所需依赖。`--no-sync` 会沿用现有环境。
+
+```bash
+uv run --locked --no-sync python main.py score \
+  --samples examples/samples.jsonl --judge --repeat-first 1 \
+  --out runs/systemone/scores.jsonl
+```
+
+接口用固定选项返回判项结果。对于判为失败的项目，脚本从输入切出候选证据，再用一次选择请求定位原文或译文短句。脚本逐字核对选中的证据。模型没有选出证据的判项记为 `insufficient_evidence`，并保留原始选项供复查。译文通顺度单独用候选译文评审。每次评审记录实测模型、请求次数、总请求耗时和可用的 token 用量。
+
+`--repeat-first 4` 会对每组前 4 条样本各复跑一次。OCR 分为纯文本和附人工核对稿两种条件。服务只收到固定判项和相应的文本，评分命令不读标签。
 
 ## 正式实验的数据和步骤
 
