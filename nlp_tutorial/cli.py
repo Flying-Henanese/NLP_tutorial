@@ -70,6 +70,10 @@ def score(args):
         from .decision import configuration, decide
 
         config["d3_flash"] = configuration()
+    if args.qwen_judge:
+        from . import qwen_judge
+
+        config["qwen_judge"] = qwen_judge.configuration()
     setup_seconds = perf_counter() - started
     with output.open("x", encoding="utf-8") as handle:
         for identifier, sample in samples.items():
@@ -78,6 +82,8 @@ def score(args):
                 record["probability"] = scorer.score(sample, alternates.get(identifier))
             if args.d3_flash:
                 record["d3_flash"] = decide(sample)
+            if args.qwen_judge:
+                record["qwen_judge"] = qwen_judge.review(sample)
             append_row(handle, record)
     write_json(metadata, {
         "configuration": config,
@@ -100,6 +106,7 @@ def main():
     scoring.add_argument("--max-tokens", type=positive, default=512)
     scoring.add_argument("--device", default="cuda")
     scoring.add_argument("--mismatches", help="JSONL of sample IDs and alternate source strings")
+    scoring.add_argument("--qwen-judge", action="store_true", help="调用 Qwen3.8-27B 评审译文")
     scoring.set_defaults(run=score)
 
     evaluation = subparsers.add_parser("evaluate", help="freeze on dev, or evaluate the frozen settings")

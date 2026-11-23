@@ -151,7 +151,7 @@ uv run --locked --extra gpu python main.py evaluate \
 | 输出 | 看什么 |
 | --- | --- |
 | `*.scores.jsonl` 和同名 `.meta.json` | 逐条 PPL、直接 NLL、条件 NLL、IFD、有效 token 数和失败原因；模型版本、模板、耗时及运行配置。PPL 与直接 NLL 共用一次推理，IFD 耗时为两次推理之和。 |
-| `summary.json` | 对比随机抽查、PPL、条件 NLL、IFD，以及启用时的 d3-flash。重点看前 20 条的真错与关键错误数、关键错误召回率、每找到一个真错需复查几条，以及同组正确译文的胜率和平局率。真实和合成结果分别看。 |
+| `summary.json` | 对比随机抽查、PPL、条件 NLL、IFD，以及启用时的 d3-flash 和 Qwen3.8-27B。重点看前 20 条的真错与关键错误数、关键错误召回率、每找到一个真错需复查几条，以及同组正确译文的胜率和平局率。真实和合成结果分别看。 |
 | `per_sample.csv` | 看每条样本的排名、是否进入复查、人工标签和原文位置。筛选 `false_alarm`（误报）和 `missed_error`（漏报），回看至少 3 条并解释原因。 |
 
 报告应列出模型、样本划分、预算、打分成功率和耗时，并说明哪种分数适合筛查哪类错译。用人工标签核对至少一个样本的逐 token 结果。脚本计算的峰值显存是 PyTorch 在该 GPU 上已分配的峰值，包含模型。按任务书交付脱敏 JSONL、逐条结果和两页以内的报告。
@@ -169,6 +169,22 @@ uv run --locked --extra gpu python main.py score \
 `--d3-flash` 会给每条原文和候选译文提交固定判项，返回每项的选择、严重程度和用于排序的风险分。输出用 `id` 对齐样本，`d3_flash.status` 标记成功、请求失败或输出无效。通顺度单独用候选译文做判断。风险从高到低为严重错误、轻微错误、证据不足和通过。原文证据由同学复查时记录。
 
 正式实验可以在开发集和测试集的 `score` 命令里同时加上 `--d3-flash` 和 `--probability`，让 `evaluate` 用同一批人工标签比较这些方法。只运行决策模型时，可以省略 `--extra gpu`，或保留它以沿用已配置好的 GPU 环境。判项定义在 `nlp_tutorial/decision.py`，修改后从开发集重新冻结配置，再跑测试集。
+
+## 用 Qwen3.8-27B 做评审基线
+
+Qwen3.8-27B 读取原文和候选译文，给出总体判断、主要错误类型、严重程度和可回查的短证据。程序逐字检查证据是否来自相应输入。它作为大模型评审基线，效果仍用人工标签衡量。
+
+在 T4 的仓库根目录运行：
+
+```bash
+uv run --locked --extra gpu python main.py score \
+  --samples examples/samples.jsonl --qwen-judge \
+  --out runs/qwen-judge-smoke/scores.jsonl
+```
+
+`--qwen-judge` 调用 `http://192.168.0.194:8890/v1/chat/completions`，模型 ID 为 `Qwen3.8-27B`。结果写到每行的 `qwen_judge` 字段。查看 `status`、`verdict`、`severity`、`error_type` 和两段证据。风险排序从高到低为严重错误、轻微错误、证据不足和通过。只用这个接口评审时，可以省略 `--extra gpu`；已有 GPU 环境则可以保留该选项。
+
+正式实验在开发集和测试集的 `score` 命令中使用相同的参数。可同时传入 `--probability --d3-flash --qwen-judge`，由同一条 `evaluate` 命令在固定复查预算下比较各项结果。`summary.json` 会记录各评审方法的失败数和耗时。提示词在 `nlp_tutorial/qwen_judge.py`，修改后用开发集重新冻结配置，再跑测试集。
 
 ## 请求 d3-flash 的最小示例
 

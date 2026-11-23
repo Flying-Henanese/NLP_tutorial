@@ -15,7 +15,8 @@ from pathlib import Path
 
 from .io import read_rows, read_samples, write_json
 
-METHODS = ("random", "ppl", "conditional", "ifd", "d3_flash")
+REVIEW_METHODS = ("d3_flash", "qwen_judge")
+METHODS = ("random", "ppl", "conditional", "ifd") + REVIEW_METHODS
 TIE_ABS = 1e-9
 
 
@@ -48,8 +49,8 @@ def score_data(record, method):
     conditional = probability.get("conditional", {})
     if method == "random":
         return 0, {}
-    if method == "d3_flash":
-        decision = record.get("d3_flash", {})
+    if method in REVIEW_METHODS:
+        decision = record.get(method, {})
         return decision.get("risk") if decision.get("status") == "ok" else None, decision
     if method == "ppl":
         return probability.get("ppl"), direct
@@ -141,7 +142,8 @@ def summarize(ids, scores, details, samples, labels, budget, seed):
     if any("status" in d for d in details):
         report["status_counts"] = dict(Counter(d.get("status", "missing_result") for d in details))
         report["insufficient_evidence_candidates"] = sum(
-            any(check["verdict"] == "insufficient_evidence" for check in d.get("checks", []))
+            d.get("verdict") == "insufficient_evidence"
+            or any(check["verdict"] == "insufficient_evidence" for check in d.get("checks", []))
             for d in details
         )
     return report, queue
@@ -182,8 +184,8 @@ def mismatch_check(ids, records):
 def enabled_method(method, configuration):
     if method == "random":
         return True
-    if method == "d3_flash":
-        return "d3_flash" in configuration
+    if method in REVIEW_METHODS:
+        return method in configuration
     return "probability" in configuration
 
 
